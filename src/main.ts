@@ -807,9 +807,18 @@ document.querySelector("#app")!.innerHTML = `
       <button id="settingsBtn" class="nav-btn">⚙️</button>
 
       <div id="settingsPanel" class="settings-panel" style="display:none;">
-        <label><input type="checkbox" id="gen1" checked /> Gen 1</label>
-        <label><input type="checkbox" id="gen2" checked /> Gen 2</label>
-        <label><input type="checkbox" id="gen3" checked /> Gen 3</label>
+        <div class="setting-item">
+          <input type="checkbox" id="gen1" checked />
+          <label for="gen1">Gen 1</label>
+        </div>
+        <div class="setting-item">
+          <input type="checkbox" id="gen2" checked />
+          <label for="gen2">Gen 2</label>
+        </div>
+        <div class="setting-item">
+          <input type="checkbox" id="gen3" checked />
+          <label for="gen3">Gen 3</label>
+        </div>
       </div>
     </div>
   </div>
