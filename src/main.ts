@@ -461,7 +461,7 @@ function shareResultsText() {
   const body = shareResults.join("\n");
 
   const footer = won
-  ? `\n\n🎉 Solved in ${guesses}/${maxGuesses}\nAnswer: ${formatPokemonName(target.name)}`
+  ? `\n\n🎉 Solved in ${guesses}/${maxGuesses}\nHints used: ${hintsUsed}\nAnswer: ${formatPokemonName(target.name)}`
   : `\n\n💀 Failed ${guesses}/${maxGuesses}\nAnswer: ${formatPokemonName(target.name)}`;
 
   const text = `${header}\n${body}${footer}`;
