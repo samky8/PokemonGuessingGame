@@ -1,4 +1,5 @@
 import "./style.css";
+import { initDailySupoku, startDailySupoku } from "./supoku";
 
 type PokemonData = {
   id: number;
@@ -7,10 +8,12 @@ type PokemonData = {
   height: number;
   weight: number;
   evolutionStage: number;
+  evolutionClass: "baby" | "stage1" | "stage2" | "stage3" | "mega";
   generation: number;
 };
 
 const API = "https://pokeapi.co/api/v2/pokemon/";
+const POKEDEX_SIZE = 649;
 let target: PokemonData;
 let pokemonNames: string[] = [];
 let guesses = 0;
@@ -22,13 +25,14 @@ let streak = 0;
 let allPokemon: PokemonData[] = [];
 let guessHistory: PokemonData[] = [];
 let shareResults: string[] = [];
-let enabledGenerations = [1, 2, 3];
+let enabledGenerations = [1, 2, 3, 4, 5];
 let selectedSuggestionIndex = -1;
+const evolutionStagesByChain = new Map<string, Promise<Map<string, number>>>();
 
 
 async function loadAllPokemonData() {
   allPokemon = await Promise.all(
-    Array.from({ length: 386 }, (_, i) => fetchPokemon(i + 1))
+    Array.from({ length: POKEDEX_SIZE }, (_, i) => fetchPokemon(i + 1))
   );
 }
 
@@ -48,31 +52,24 @@ function generationToNumber(gen: string): number {
 }
 
 async function getEvolutionStage(species: any): Promise<number> {
-  const chainRes = await fetch(species.evolution_chain.url);
-  const chainData = await chainRes.json();
-
-  const targetName = species.name;
-
-  let stage = 1;
-  let current = chainData.chain;
-
-  // stage 1
-  if (current.species.name === targetName) {
-    return 1;
+  const chainUrl = species.evolution_chain.url as string;
+  let stages = evolutionStagesByChain.get(chainUrl);
+  if (!stages) {
+    stages = fetch(chainUrl)
+      .then((response) => response.json())
+      .then((data) => {
+        const result = new Map<string, number>();
+        const visit = (node: any, stage: number) => {
+          result.set(node.species.name, stage);
+          node.evolves_to.forEach((evolution: any) => visit(evolution, stage + 1));
+        };
+        visit(data.chain, 1);
+        return result;
+      });
+    evolutionStagesByChain.set(chainUrl, stages);
   }
-
-  // stage 2 / 3+
-  while (current.evolves_to.length > 0) {
-    stage++;
-
-    current = current.evolves_to[0];
-
-    if (current.species.name === targetName) {
-      return stage;
-    }
-  }
-
-  return stage;
+  const chainStages = await stages;
+  return chainStages.get(species.name) ?? 1;
 }
 
 function initBoard() {
@@ -135,8 +132,19 @@ function toFeetInches(heightDm: number) {
 }
 
 async function loadPokemonNames() {
-  const res = await fetch("https://pokeapi.co/api/v2/pokemon?limit=386");  const data = await res.json();
+  const res = await fetch(`https://pokeapi.co/api/v2/pokemon?limit=${POKEDEX_SIZE}`);
+  const data = await res.json();
   pokemonNames = data.results.map((p: any) => p.name);
+}
+
+async function loadMegaPokemonData(): Promise<PokemonData[]> {
+  const response = await fetch("https://pokeapi.co/api/v2/pokemon?limit=10000");
+  const data = await response.json();
+  const megaNames: string[] = data.results
+    .map((entry: any) => entry.name as string)
+    .filter((name: string) => /-mega(?:-[xy])?$/.test(name));
+  const megaPokemon = await Promise.all(megaNames.map((name) => fetchPokemon(name)));
+  return megaPokemon.filter((pokemon) => pokemon.generation >= 1 && pokemon.generation <= 5);
 }
 
 await loadPokemonNames();
@@ -144,6 +152,11 @@ await loadPokemonNames();
 if (allPokemon.length === 0) {
   await loadAllPokemonData();
 }
+const supokuPokemon = [
+  ...allPokemon,
+  ...await loadMegaPokemonData(),
+];
+pokemonNames = [...new Set([...pokemonNames, ...supokuPokemon.map((pokemon) => pokemon.name)])];
 
 
 
@@ -153,6 +166,7 @@ async function fetchPokemon(nameOrId: string | number): Promise<PokemonData> {
 
   const speciesRes = await fetch(data.species.url);
   const species = await speciesRes.json();
+  const evolutionStage = await getEvolutionStage(species);
 
   return {
     id: data.id,
@@ -160,8 +174,13 @@ async function fetchPokemon(nameOrId: string | number): Promise<PokemonData> {
     types: data.types.map((t: any) => t.type.name),
     height: data.height,
     weight: data.weight,
-    evolutionStage: await getEvolutionStage(species),
-    generation: generationToNumber(species.generation.name),  
+    evolutionStage,
+    evolutionClass: data.name.includes("-mega")
+      ? "mega"
+      : species.is_baby
+      ? "baby"
+      : `stage${Math.min(evolutionStage, 3)}` as PokemonData["evolutionClass"],
+    generation: generationToNumber(species.generation.name),
   };
 }
 
@@ -649,6 +668,14 @@ function updateGenerationFilters() {
     enabledGenerations.push(3);
   }
 
+  if ((document.getElementById("gen4") as HTMLInputElement).checked) {
+    enabledGenerations.push(4);
+  }
+
+  if ((document.getElementById("gen5") as HTMLInputElement).checked) {
+    enabledGenerations.push(5);
+  }
+
   // prevent empty selection
   if (enabledGenerations.length === 0) {
     enabledGenerations = [1];
@@ -797,7 +824,16 @@ document.querySelector("#app")!.innerHTML = `
       class="nav-logo"
       alt="Pokeball"
     />
-    <span class="nav-title">Who's that Pokémon?</span>
+    <div id="gamePicker" class="game-picker">
+      <button id="gamePickerButton" class="game-picker-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="gamePickerMenu">
+        <span id="gamePickerTitle" class="nav-title">Daily SuPoku</span>
+        <svg class="game-picker-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 6 5 5 5-5" /></svg>
+      </button>
+      <div id="gamePickerMenu" class="game-picker-menu" role="menu" aria-label="Choose a game" hidden>
+        <button id="classicGameOption" type="button" role="menuitemradio" aria-checked="false">Who's that Pokémon?</button>
+        <button id="supokuGameOption" type="button" role="menuitemradio" aria-checked="true">Daily SuPoku</button>
+      </div>
+    </div>
   </div>
 
   <div class="nav-right">
@@ -819,6 +855,14 @@ document.querySelector("#app")!.innerHTML = `
           <input type="checkbox" id="gen3" checked />
           <label for="gen3">Gen 3</label>
         </div>
+        <div class="setting-item">
+          <input type="checkbox" id="gen4" checked />
+          <label for="gen4">Gen 4</label>
+        </div>
+        <div class="setting-item">
+          <input type="checkbox" id="gen5" checked />
+          <label for="gen5">Gen 5</label>
+        </div>
       </div>
     </div>
   </div>
@@ -826,6 +870,7 @@ document.querySelector("#app")!.innerHTML = `
 
   <div class="container">
 
+<section id="classicGame" class="game-view" aria-labelledby="classicGameOption" hidden>
 <div class="top-bar">
   <div class="stat-card">
     <div id="remainingCount" class="stat-number">5</div>
@@ -833,7 +878,7 @@ document.querySelector("#app")!.innerHTML = `
   </div>
 
   <div class="stat-card">
-    <div id="validCount" class="stat-number">386</div>
+    <div id="validCount" class="stat-number">649</div>
     <div class="stat-label">Valid choices</div>
   </div>
 
@@ -900,7 +945,88 @@ document.querySelector("#app")!.innerHTML = `
       </div>
 
     </div>
+</section>
+
+<section id="dailySupoku" class="game-view" aria-labelledby="supokuGameOption">
+  <div class="game-card supoku-card">
+    <h1 class="title">Daily SuPoku</h1>
+    <div class="supoku-date-row">
+      <p class="supoku-date">Puzzle for <span id="supokuDate"></span></p>
+      <div class="supoku-timer-card" role="timer" aria-live="off">
+        <span>Time</span>
+        <strong id="supokuTimer">00:00</strong>
+      </div>
+      <button id="supokuInfoBtn" class="supoku-info-btn" type="button" aria-label="How to play SuPoku" title="How to play">i</button>
+    </div>
+    <div class="supoku-categories" aria-label="Today's categories">
+      <span><strong>Generation</strong><small id="supokuGenerations">Four daily generations</small></span>
+      <span><strong>Evolution</strong><small id="supokuEvolutionClasses">Four daily stages</small></span>
+      <span><strong>Type</strong><img id="supokuTypeOne" class="supoku-type-icon" alt="" /></span>
+      <span><strong>Type</strong><img id="supokuTypeTwo" class="supoku-type-icon" alt="" /></span>
+    </div>
+    <div id="supokuBoard" class="supoku-board" aria-label="Daily SuPoku 4 by 4 board"></div>
+    <div class="supoku-stats">
+      <span>Filled <strong id="supokuProgress">4/16</strong></span>
+      <span>Conflicts <strong id="supokuMistakes">0</strong></span>
+    </div>
+    <div id="supokuCompletion" class="supoku-completion" hidden>
+      <h2 id="supokuCompletionTitle">Daily puzzle complete!</h2>
+      <p>Time: <strong id="supokuCompletionTime">00:00</strong></p>
+      <div class="button-row">
+        <button id="supokuCompletionShareBtn" type="button">Share result</button>
+        <button id="supokuCompletionCloseBtn" type="button">View board</button>
+      </div>
+    </div>
+    <p id="supokuSelected" class="supoku-selected" aria-live="polite"></p>
+    <div id="supokuSearchRow" class="search-row supoku-search">
+      <div class="search-wrapper">
+        <input id="supokuInput" list="supokuNameOptions" placeholder="Search Pokémon for this cell..." autocomplete="off" />
+        <datalist id="supokuNameOptions"></datalist>
+        <button id="supokuGuessBtn" type="button">Place</button>
+      </div>
+    </div>
+    <div id="supokuActionRow" class="button-row">
+      <button id="supokuRevealBtn" class="supoku-give-up" type="button">Give up</button>
+      <button id="supokuShareBtn" type="button">Share result</button>
+    </div>
+    <p id="supokuFeedback" class="supoku-feedback" role="status"></p>
+    <p id="supokuStatus" class="supoku-status" aria-live="polite"></p>
   </div>
+</section>
+<dialog id="supokuRevealConfirm" class="supoku-dialog" aria-labelledby="supokuRevealTitle">
+  <div class="supoku-dialog-content">
+    <span class="supoku-dialog-kicker">Daily SuPoku</span>
+    <h2 id="supokuRevealTitle">Give up on today's puzzle?</h2>
+    <p>This will fill every empty cell, stop your timer, and mark this puzzle as revealed. You can still browse other valid Pokémon for each cell.</p>
+    <div class="button-row supoku-confirm-actions">
+      <button id="supokuCancelReveal" type="button">Keep playing</button>
+      <button id="supokuConfirmReveal" class="supoku-give-up" type="button">Give up</button>
+    </div>
+  </div>
+</dialog>
+<dialog id="supokuInfo" class="supoku-dialog" aria-labelledby="supokuInfoTitle">
+  <div class="supoku-dialog-content">
+    <button id="supokuInfoClose" class="supoku-dialog-close" type="button" aria-label="Close instructions">×</button>
+    <span class="supoku-dialog-kicker">Daily SuPoku</span>
+    <h2 id="supokuInfoTitle">How to play SuPoku</h2>
+    <p>Fill the 4×4 board with Pokémon. Each row, column, and bold-outlined 2×2 box must contain each Generation and Evolution category once, exactly one Pokémon of each daily type, and two Pokémon that are neither daily type.</p>
+    <p>A Pokémon that has both daily types is not allowed. Each cell has one valid category combination, but multiple Pokémon may fit it. Choose a cell, search for any Pokémon that matches, and place it. Your timer starts when you press Start.</p>
+  </div>
+</dialog>
+<dialog id="supokuWelcome" class="supoku-dialog" aria-labelledby="supokuWelcomeTitle">
+  <div class="supoku-dialog-content">
+    <span class="supoku-dialog-kicker">A new daily challenge</span>
+    <h2 id="supokuWelcomeTitle">How to play SuPoku</h2>
+    <p>Fill the 4×4 board with Pokémon. Each row, column, and bold-outlined 2×2 box must contain each Generation and Evolution category once, exactly one Pokémon of each daily type, and two Pokémon that are neither daily type.</p>
+    <p>A Pokémon that has both daily types is not allowed. Each cell has one valid category combination, but multiple Pokémon may fit it. Choose a cell, search for any Pokémon that matches, and place it. Your timer starts when you press Start.</p>
+    <p class="supoku-dialog-date">Today's puzzle: <strong id="supokuWelcomeDate"></strong></p>
+    <button id="supokuStartBtn" class="supoku-start-btn" type="button" autofocus>Start</button>
+  </div>
+</dialog>
+</div>
+<footer class="site-footer">
+  This website is not affiliated with Nintendo and does not own or claim any rights to any Nintendo trademark or the Pokémon trademark, and all references to such are used for commentary and informational purposes only.
+</footer>
 `;
 
 function generateFloatingSprites() {
@@ -951,7 +1077,7 @@ document
   .getElementById("settingsBtn")!
   .addEventListener("click", toggleSettings);
 
-["gen1", "gen2", "gen3"].forEach((id) => {
+["gen1", "gen2", "gen3", "gen4", "gen5"].forEach((id) => {
   document
     .getElementById(id)!
     .addEventListener("change", updateGenerationFilters);
@@ -990,3 +1116,78 @@ document.getElementById("validChoicesToggle")!.addEventListener("click", () => {
 
 setupAutocomplete();
 init();
+
+const gamePicker = document.getElementById("gamePicker")!;
+const gamePickerButton = document.getElementById("gamePickerButton")!;
+const gamePickerMenu = document.getElementById("gamePickerMenu")!;
+
+function closeGamePicker() {
+  gamePickerMenu.hidden = true;
+  gamePickerButton.setAttribute("aria-expanded", "false");
+}
+
+gamePickerButton.addEventListener("click", () => {
+  const isExpanded = gamePickerButton.getAttribute("aria-expanded") === "true";
+  gamePickerMenu.hidden = isExpanded;
+  gamePickerButton.setAttribute("aria-expanded", String(!isExpanded));
+  if (!isExpanded) {
+    gamePickerMenu.querySelector<HTMLButtonElement>('[aria-checked="true"]')?.focus();
+  }
+});
+
+document.addEventListener("click", (event) => {
+  if (!gamePicker.contains(event.target as Node)) closeGamePicker();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeGamePicker();
+});
+
+document.getElementById("classicGameOption")!.addEventListener("click", () => {
+  setActiveGameTab("classic");
+  closeGamePicker();
+  gamePickerButton.focus();
+});
+document.getElementById("supokuGameOption")!.addEventListener("click", () => {
+  setActiveGameTab("supoku");
+  closeGamePicker();
+  gamePickerButton.focus();
+});
+
+const supokuWelcome = document.getElementById("supokuWelcome") as HTMLDialogElement;
+supokuWelcome.addEventListener("cancel", (event) => {
+  event.preventDefault();
+});
+const supokuInfo = document.getElementById("supokuInfo") as HTMLDialogElement;
+document.getElementById("supokuInfoBtn")!.addEventListener("click", () => {
+  supokuInfo.showModal();
+});
+document.getElementById("supokuInfoClose")!.addEventListener("click", () => {
+  supokuInfo.close();
+});
+document.getElementById("supokuStartBtn")!.addEventListener("click", () => {
+  setActiveGameTab("supoku");
+  supokuWelcome.close();
+  startDailySupoku();
+});
+
+try {
+  initDailySupoku(supokuPokemon, pokemonNames);
+} catch (error) {
+  const status = document.getElementById("supokuStatus")!;
+  status.textContent = error instanceof Error
+    ? `Today's puzzle could not be prepared: ${error.message}`
+    : "Today's puzzle could not be prepared.";
+  console.error("Daily SuPoku initialization failed", error);
+}
+
+supokuWelcome.showModal();
+
+function setActiveGameTab(tab: "classic" | "supoku") {
+  const classic = tab === "classic";
+  document.getElementById("classicGame")!.hidden = !classic;
+  document.getElementById("dailySupoku")!.hidden = classic;
+  document.getElementById("gamePickerTitle")!.textContent =
+    classic ? "Who's that Pokémon?" : "Daily SuPoku";
+  document.getElementById("classicGameOption")!.setAttribute("aria-checked", String(classic));
+  document.getElementById("supokuGameOption")!.setAttribute("aria-checked", String(!classic));
+}
