@@ -64,13 +64,27 @@ let timerInterval: number | undefined;
 let nextPuzzleCountdownInterval: number | undefined;
 let selectedSupokuSuggestionIndex = -1;
 let hintsEnabled = false;
-let difficulty: SupokuDifficulty = "hard";
+let difficulty: SupokuDifficulty = "normal";
 let normalBoxPokemonIds: number[] = [];
+let normalBoxFilters = {
+  generation: "all",
+  evolutionClass: "all",
+  type: "all",
+};
 let selectedBoxPokemonId: number | undefined;
+let openCellPickerIndex: number | undefined;
 let pointerDraggedPokemonId: number | undefined;
 let pointerDraggedSourceCell: number | undefined;
 let activeBoxPointerId: number | undefined;
 let pointerDragGhost: HTMLElement | undefined;
+let pendingTouchDrag: {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  pokemon: SupokuPokemon;
+  sourceCell?: number;
+  target: HTMLElement;
+} | undefined;
 
 function dailyDate(): string {
   const now = new Date();
@@ -408,7 +422,7 @@ function readSavedGame(date: string): void {
   elapsedMs = state.elapsedMs ?? null;
   revealed = state.revealed ?? false;
   revealedCorrectCells = new Set(state.revealedCorrectCells ?? []);
-  difficulty = state.difficulty ?? "hard";
+  difficulty = state.difficulty ?? "normal";
 }
 
 function saveGame(): void {
@@ -473,7 +487,8 @@ function finishPuzzle(wasRevealed = false): void {
   document.getElementById("supokuCompletionTime")!.textContent = formatTime(elapsedMs);
   document.getElementById("supokuCompletionTitle")!.textContent =
     revealed ? "Puzzle revealed" : "Daily puzzle complete!";
-  document.getElementById("supokuCompletion")!.hidden = false;
+  const completion = document.getElementById("supokuCompletion") as HTMLDialogElement;
+  if (!completion.open) completion.showModal();
   document.getElementById("supokuActionRow")!.hidden = true;
   document.getElementById("supokuSearchRow")!.hidden = true;
   document.getElementById("supokuStatus")!.textContent = revealed
@@ -649,14 +664,84 @@ function createNormalBoxPokemon(): number[] {
   return shuffle([...useful, ...decoys], random).map((candidate) => candidate.id);
 }
 
+function getFilteredNormalBoxPokemonIds(): number[] {
+  if (!puzzle) return [];
+  return normalBoxPokemonIds.filter((pokemonId) => {
+    const pokemon = pokemonById.get(pokemonId);
+    if (!pokemon) return false;
+    return (
+      (normalBoxFilters.generation === "all" ||
+        pokemon.generation === Number(normalBoxFilters.generation)) &&
+      (normalBoxFilters.evolutionClass === "all" ||
+        pokemon.evolutionClass === normalBoxFilters.evolutionClass) &&
+      (normalBoxFilters.type === "all" ||
+        pokemon.types.includes(normalBoxFilters.type))
+    );
+  });
+}
+
+function initializeNormalBoxFilters(): void {
+  if (!puzzle) return;
+  normalBoxFilters = {
+    generation: "all",
+    evolutionClass: "all",
+    type: "all",
+  };
+  const definitions: {
+    id: string;
+    values: { value: string; label: string }[];
+  }[] = [
+    {
+      id: "supokuBoxRegionFilter",
+      values: puzzle.generations.map((generation) => ({
+        value: String(generation),
+        label: regionForGeneration(generation),
+      })),
+    },
+    {
+      id: "supokuBoxEvolutionFilter",
+      values: puzzle.evolutionClasses.map((evolutionClass) => ({
+        value: evolutionClass,
+        label: formatEvolutionClass(evolutionClass),
+      })),
+    },
+    {
+      id: "supokuBoxTypeFilter",
+      values: pokemonTypes.map((type) => ({
+        value: type,
+        label: formatName(type),
+      })),
+    },
+  ];
+  for (const definition of definitions) {
+    const select = document.getElementById(definition.id) as HTMLSelectElement;
+    select.replaceChildren(new Option("ALL", "all"));
+    for (const value of definition.values) {
+      select.add(new Option(value.label, value.value));
+    }
+    select.value = "all";
+  }
+}
+
 function renderNormalBox(): void {
   const panel = document.getElementById("supokuBoxPanel")!;
   const box = document.getElementById("supokuPokemonBox")!;
-  panel.hidden = difficulty !== "normal";
+  panel.hidden = difficulty !== "normal" || elapsedMs !== null;
   box.innerHTML = "";
   if (difficulty !== "normal") return;
 
-  for (const pokemonId of normalBoxPokemonIds) {
+  const filteredIds = getFilteredNormalBoxPokemonIds();
+  document.getElementById("supokuBoxCount")!.textContent =
+    `Showing ${filteredIds.length} of ${normalBoxPokemonIds.length} Pokémon`;
+  if (filteredIds.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "supoku-box-empty";
+    empty.textContent = "No Pokémon match these filters.";
+    box.appendChild(empty);
+    return;
+  }
+
+  for (const pokemonId of filteredIds) {
     const pokemon = pokemonById.get(pokemonId);
     if (!pokemon) continue;
     const button = document.createElement("button");
@@ -682,7 +767,7 @@ function renderNormalBox(): void {
       });
       document.getElementById("supokuFeedback")!.textContent = selectedBoxPokemonId === undefined
         ? "Pokémon selection cleared."
-        : `${formatName(pokemon.name)} selected. Tap an empty cell or drag it there.`;
+        : `${formatName(pokemon.name)} selected. Tap a cell to choose from the box, or drag it there.`;
     });
     button.addEventListener("dragstart", (event) => {
       if (!event.dataTransfer || button.disabled) {
@@ -692,6 +777,7 @@ function renderNormalBox(): void {
       event.dataTransfer.setData("text/plain", `box:${pokemon.id}`);
       event.dataTransfer.effectAllowed = "move";
       selectedBoxPokemonId = pokemon.id;
+      document.querySelector(".supoku-card")?.classList.add("is-dragging");
     });
     button.addEventListener("dragend", clearBoxDragState);
     button.addEventListener("pointerdown", (event) => {
@@ -706,8 +792,10 @@ function clearBoxDragState(): void {
   pointerDraggedPokemonId = undefined;
   pointerDraggedSourceCell = undefined;
   activeBoxPointerId = undefined;
+  pendingTouchDrag = undefined;
   pointerDragGhost?.remove();
   pointerDragGhost = undefined;
+  document.querySelector(".supoku-card")?.classList.remove("is-dragging");
   document.querySelectorAll(".supoku-cell.drop-target").forEach((element) =>
     element.classList.remove("drop-target")
   );
@@ -759,20 +847,37 @@ function startTouchBoxDrag(
   sourceCell?: number,
 ): void {
   if (event.pointerType !== "touch") return;
-  event.preventDefault();
-  activeBoxPointerId = event.pointerId;
-  pointerDraggedPokemonId = pokemon.id;
-  pointerDraggedSourceCell = sourceCell;
-  selectedBoxPokemonId = pokemon.id;
-  pointerDragGhost = document.createElement("div");
-  pointerDragGhost.className = "supoku-box-drag-ghost";
-  pointerDragGhost.innerHTML = `<img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${pokemon.id}.png" alt="" /><span>${formatName(pokemon.name)}</span>`;
-  document.body.appendChild(pointerDragGhost);
-  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-  moveBoxPointerGhost(event);
+  pendingTouchDrag = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    pokemon,
+    sourceCell,
+    target: event.currentTarget as HTMLElement,
+  };
 }
 
 function moveBoxPointerGhost(event: PointerEvent): void {
+  if (activeBoxPointerId === undefined && pendingTouchDrag?.pointerId === event.pointerId) {
+    if (
+      Math.hypot(
+        event.clientX - pendingTouchDrag.startX,
+        event.clientY - pendingTouchDrag.startY
+      ) < 8
+    ) return;
+    event.preventDefault();
+    activeBoxPointerId = event.pointerId;
+    pointerDraggedPokemonId = pendingTouchDrag.pokemon.id;
+    pointerDraggedSourceCell = pendingTouchDrag.sourceCell;
+    selectedBoxPokemonId = pendingTouchDrag.pokemon.id;
+    document.querySelector(".supoku-card")?.classList.add("is-dragging");
+    pointerDragGhost = document.createElement("div");
+    pointerDragGhost.className = "supoku-box-drag-ghost";
+    pointerDragGhost.innerHTML = `<img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${pendingTouchDrag.pokemon.id}.png" alt="" /><span>${formatName(pendingTouchDrag.pokemon.name)}</span>`;
+    document.body.appendChild(pointerDragGhost);
+    pendingTouchDrag.target.setPointerCapture(event.pointerId);
+    pendingTouchDrag = undefined;
+  }
   if (activeBoxPointerId !== event.pointerId || !pointerDragGhost) return;
   pointerDragGhost.style.left = `${event.clientX + 12}px`;
   pointerDragGhost.style.top = `${event.clientY + 12}px`;
@@ -784,6 +889,10 @@ function moveBoxPointerGhost(event: PointerEvent): void {
 }
 
 function onBoxPointerUp(event: PointerEvent): void {
+  if (pendingTouchDrag?.pointerId === event.pointerId) {
+    pendingTouchDrag = undefined;
+    return;
+  }
   if (
     activeBoxPointerId !== event.pointerId ||
     (pointerDraggedPokemonId === undefined && pointerDraggedSourceCell === undefined)
@@ -828,11 +937,19 @@ function renderBoard(): void {
         : ", hidden answer"}`
     );
     if (isGiven || isSolved) {
+      const typeDetails = shownPokemon.types.map((type) =>
+        puzzle!.types.includes(type)
+          ? `<img class="supoku-cell-type-icon" src="/Types/${type}.png" alt="${formatName(type)}" title="${formatName(type)} type" />`
+          : formatName(type)
+      ).join("/");
       button.innerHTML = `
         <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${shownPokemon.id}.png" alt="" />
         <span class="supoku-pokemon-name">${formatName(shownPokemon.name)}</span>
         <small class="supoku-cell-details">
-          <span>${regionForGeneration(shownPokemon.generation)} · ${shownPokemon.types.map(formatName).join("/")}</span>
+          <span class="supoku-cell-detail-types">
+            <span>${regionForGeneration(shownPokemon.generation)} ·</span>
+            <span class="supoku-cell-type-list">${typeDetails}</span>
+          </span>
           <span>${formatEvolutionClass(shownPokemon.evolutionClass)}</span>
         </small>
       `;
@@ -851,6 +968,7 @@ function renderBoard(): void {
           event.dataTransfer.setData("text/plain", `cell:${index}`);
           event.dataTransfer.effectAllowed = "move";
           selectedBoxPokemonId = undefined;
+          document.querySelector(".supoku-card")?.classList.add("is-dragging");
         });
         button.addEventListener("dragend", clearBoxDragState);
         button.addEventListener("pointerdown", (event) => {
@@ -864,16 +982,74 @@ function renderBoard(): void {
         ${hintsEnabled ? `<small class="supoku-cell-hint">${formatCellHint(index)}</small>` : ""}
       `;
       button.addEventListener("click", () => {
-        if (difficulty === "normal" && selectedBoxPokemonId !== undefined) {
-          const selectedPokemon = pokemonById.get(selectedBoxPokemonId);
-          if (selectedPokemon) {
-            placePokemonInCell(index, selectedPokemon);
-            return;
-          }
+        if (difficulty === "normal") {
+          openCellPickerIndex = openCellPickerIndex === index ? undefined : index;
+          selectedCell = index;
+          renderBoard();
+          return;
         }
         selectedCell = index;
         renderBoard();
       });
+    }
+    if (difficulty === "normal" && !isGiven && !revealed && elapsedMs === null) {
+      if (isSolved) {
+        button.addEventListener("click", () => {
+          openCellPickerIndex = openCellPickerIndex === index ? undefined : index;
+          selectedCell = index;
+          renderBoard();
+        });
+      }
+      if (openCellPickerIndex === index) {
+        const picker = document.createElement("div");
+        picker.className = "supoku-cell-picker";
+        picker.setAttribute("role", "listbox");
+        picker.setAttribute("aria-label", `Choose a Pokémon for cell ${index + 1}`);
+        if (index % 4 >= 2) {
+          picker.classList.add("align-right");
+        }
+        if (Math.floor(index / 4) >= 2) {
+          picker.classList.add("align-above");
+        }
+        const remainingIds = normalBoxPokemonIds
+          .filter((pokemonId) => {
+            const usedInOtherCell = [...placedPokemonIds.entries()].some(
+              ([cellIndex, placedId]) => cellIndex !== index && placedId === pokemonId
+            );
+            return !usedInOtherCell;
+          })
+          .sort((firstId, secondId) =>
+            (pokemonById.get(firstId)?.name ?? "").localeCompare(
+              pokemonById.get(secondId)?.name ?? ""
+            )
+          );
+        if (remainingIds.length === 0) {
+          const empty = document.createElement("p");
+          empty.textContent = "No Pokémon remain in the box.";
+          picker.appendChild(empty);
+        }
+        for (const pokemonId of remainingIds) {
+          const pokemon = pokemonById.get(pokemonId);
+          if (!pokemon) continue;
+          const option = document.createElement("button");
+          option.type = "button";
+          option.className = "supoku-cell-picker-option";
+          option.setAttribute("role", "option");
+          option.setAttribute("aria-label", formatName(pokemon.name));
+          option.title = formatName(pokemon.name);
+          option.innerHTML = `
+            <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${pokemon.id}.png" alt="" draggable="false" />
+            <span>${formatName(pokemon.name)}</span>
+          `;
+          option.addEventListener("click", (event) => {
+            event.stopPropagation();
+            openCellPickerIndex = undefined;
+            placePokemonInCell(index, pokemon);
+          });
+          picker.appendChild(option);
+        }
+        cell.appendChild(picker);
+      }
     }
     button.addEventListener("dragover", (event) => {
       if (
@@ -1022,6 +1198,7 @@ function clearCell(index: number): void {
   placedPokemonIds.delete(index);
   selectedCell = index;
   selectedBoxPokemonId = undefined;
+  openCellPickerIndex = undefined;
   document.getElementById("supokuFeedback")!.textContent = "";
   saveGame();
   renderBoard();
@@ -1043,6 +1220,7 @@ function possibleAnswers(index: number): SupokuPokemon[] {
   }
   return allDailyPokemon
     .filter((candidate) =>
+      (difficulty !== "normal" || normalBoxPokemonIds.includes(candidate.id)) &&
       !usedElsewhere.has(candidate.id) &&
       candidate.generation === answer.generation &&
       candidate.evolutionClass === answer.evolutionClass &&
@@ -1131,8 +1309,11 @@ function renderSupokuSuggestions(): void {
 function placePokemonInCell(index: number, candidate: SupokuPokemon): void {
   if (!puzzle || solvedCells.size === 12 || elapsedMs !== null) return;
   const feedback = document.getElementById("supokuFeedback")!;
-  if (puzzle.givens.has(index) || solvedCells.has(index)) {
-    feedback.textContent = "Choose an empty cell first.";
+  if (
+    puzzle.givens.has(index) ||
+    (solvedCells.has(index) && difficulty !== "normal")
+  ) {
+    feedback.textContent = "Choose an available cell first.";
     return;
   }
   if (difficulty === "normal") {
@@ -1153,6 +1334,7 @@ function placePokemonInCell(index: number, candidate: SupokuPokemon): void {
   placedPokemonIds.set(index, candidate.id);
   selectedCell = index;
   selectedBoxPokemonId = undefined;
+  openCellPickerIndex = undefined;
   feedback.textContent = "";
   const input = document.getElementById("supokuInput") as HTMLInputElement;
   input.value = "";
@@ -1226,7 +1408,7 @@ async function shareBoard(): Promise<void> {
   const time = formatTime(currentElapsedMs());
   const text = `Daily SuPoku ${puzzle.date}\n${[0, 1, 2, 3]
     .map((row) => progress.slice(row * 4, row * 4 + 4).join(""))
-    .join("\n")}\n${result} ${solvedCells.size + puzzle.givens.size}/16 · ${time} · ${conflicts.size} conflicts`;
+    .join("\n")}\n${result} ${solvedCells.size + puzzle.givens.size}/16 · ${time}\nURL: pokedle-six.vercel.app`;
   const feedback = document.getElementById("supokuFeedback")!;
   const sharePromise = navigator.share
     ? navigator.share({ title: "Daily SuPoku", text }).catch((error: unknown) => {
@@ -1276,6 +1458,7 @@ export function initDailySupoku(data: SupokuPokemon[]): void {
   nextPuzzleCountdownInterval = window.setInterval(renderNextPuzzleCountdown, 1000);
   puzzle = createPuzzle(date);
   normalBoxPokemonIds = createNormalBoxPokemon();
+  initializeNormalBoxFilters();
   selectedBoxPokemonId = undefined;
   solvedCells = new Set();
   placedPokemonIds = new Map();
@@ -1286,12 +1469,8 @@ export function initDailySupoku(data: SupokuPokemon[]): void {
   revealedCorrectCells = new Set();
   hintsEnabled = false;
   readSavedGame(date);
-  const difficultySelect = document.getElementById("supokuDifficulty") as HTMLSelectElement;
-  difficultySelect.value = difficulty;
-  document.getElementById("supokuDifficultyDescription")!.textContent =
-    difficulty === "normal"
-      ? "Choose from 40 Pokémon in the storage box. The box includes useful choices and decoys."
-      : "Search for any Pokémon and place it in the selected cell. Wrong choices create conflicts.";
+  (document.getElementById("normalModeToggle") as HTMLInputElement).checked =
+    difficulty === "normal";
   const firstUnsolved = puzzle.answers.findIndex((_, index) =>
     !puzzle!.givens.has(index) && !solvedCells.has(index)
   );
@@ -1315,7 +1494,8 @@ export function initDailySupoku(data: SupokuPokemon[]): void {
   typeTwo.alt = `${formatName(puzzle.types[1])} type`;
   document.getElementById("supokuDate")!.textContent = date;
   document.getElementById("supokuWelcomeDate")!.textContent = date;
-  document.getElementById("supokuCompletion")!.hidden = true;
+  const completion = document.getElementById("supokuCompletion") as HTMLDialogElement;
+  if (completion.open) completion.close();
   document.getElementById("supokuActionRow")!.hidden = false;
   document.getElementById("supokuSearchRow")!.hidden = difficulty === "normal";
   renderTimer();
@@ -1329,6 +1509,18 @@ export function initDailySupoku(data: SupokuPokemon[]): void {
   renderBoard();
 
   document.getElementById("supokuGuessBtn")!.addEventListener("click", submitCellGuess);
+  const boxFilterHandlers: [string, keyof typeof normalBoxFilters][] = [
+    ["supokuBoxRegionFilter", "generation"],
+    ["supokuBoxEvolutionFilter", "evolutionClass"],
+    ["supokuBoxTypeFilter", "type"],
+  ];
+  for (const [elementId, filterKey] of boxFilterHandlers) {
+    document.getElementById(elementId)!.addEventListener("change", (event) => {
+      normalBoxFilters[filterKey] = (event.currentTarget as HTMLSelectElement).value;
+      openCellPickerIndex = undefined;
+      renderBoard();
+    });
+  }
   window.addEventListener("pointermove", moveBoxPointerGhost);
   window.addEventListener("pointerup", onBoxPointerUp);
   window.addEventListener("pointercancel", clearBoxDragState);
@@ -1386,7 +1578,7 @@ export function initDailySupoku(data: SupokuPokemon[]): void {
     });
   });
   document.getElementById("supokuCompletionCloseBtn")!.addEventListener("click", () => {
-    document.getElementById("supokuCompletion")!.hidden = true;
+    (document.getElementById("supokuCompletion") as HTMLDialogElement).close();
   });
   document.getElementById("supokuShareBtn")!.addEventListener("click", () => {
     void shareBoard().catch((error: unknown) => {
@@ -1401,10 +1593,25 @@ export function startDailySupoku(): void {
 }
 
 export function setDailySupokuDifficulty(nextDifficulty: SupokuDifficulty): void {
+  if (!puzzle) return;
   difficulty = nextDifficulty;
-  document.getElementById("supokuSearchRow")!.hidden = difficulty === "normal";
-  document.getElementById("supokuBoxPanel")!.hidden = difficulty !== "normal";
   selectedBoxPokemonId = undefined;
+  openCellPickerIndex = undefined;
+
+  if (difficulty === "normal") {
+    for (const [index, pokemonId] of placedPokemonIds) {
+      if (normalBoxPokemonIds.includes(pokemonId)) continue;
+      placedPokemonIds.delete(index);
+      solvedCells.delete(index);
+    }
+  }
+
+  (document.getElementById("normalModeToggle") as HTMLInputElement).checked =
+    difficulty === "normal";
+  document.getElementById("supokuSearchRow")!.hidden =
+    difficulty === "normal" || elapsedMs !== null;
+  document.getElementById("supokuBoxPanel")!.hidden =
+    difficulty !== "normal" || elapsedMs !== null;
   saveGame();
   renderBoard();
 }

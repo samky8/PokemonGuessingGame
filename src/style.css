@@ -411,6 +411,10 @@ input {
   margin: 0;
 }
 
+.setting-item[hidden] {
+  display: none;
+}
+
 .setting-item input[type="checkbox"] {
   margin: 0;
 }
@@ -851,12 +855,32 @@ body.light-theme .valid-choice-name {
   margin: 0 auto 20px;
   border: 3px solid rgba(148, 163, 184, 0.8);
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .supoku-cell-wrap {
   position: relative;
   min-width: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.supoku-card.is-dragging,
+.supoku-card.is-dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-touch-callout: none;
+}
+
+.supoku-board *,
+.supoku-pokemon-box * {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.supoku-cell-wrap:has(.supoku-cell-picker) {
+  z-index: 5;
 }
 
 .supoku-cell-wrap:nth-child(4n + 2) {
@@ -911,6 +935,7 @@ body.light-theme .valid-choice-name {
 
 .supoku-cell.supoku-movable {
   cursor: grab;
+  touch-action: none;
 }
 
 .supoku-cell.supoku-movable:active {
@@ -936,6 +961,7 @@ body.light-theme .valid-choice-name {
   height: 52px;
   margin-top: -4px;
   image-rendering: pixelated;
+  -webkit-user-drag: none;
 }
 
 .supoku-cell .supoku-pokemon-name {
@@ -967,8 +993,8 @@ body.light-theme .valid-choice-name {
 .supoku-cell .supoku-cell-details {
   display: block;
   max-width: 100%;
-  font-size: 9px;
-  line-height: 1.25;
+  font-size: 10px;
+  line-height: 1.3;
   text-transform: none;
 }
 
@@ -976,6 +1002,28 @@ body.light-theme .valid-choice-name {
   display: block;
   max-width: 100%;
   overflow-wrap: anywhere;
+}
+
+.supoku-cell-details .supoku-cell-detail-types,
+.supoku-cell-details .supoku-cell-type-list {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.supoku-cell-type-list {
+  min-width: 0;
+}
+
+.supoku-cell .supoku-cell-type-icon {
+  display: inline-block;
+  width: 48px;
+  height: 18px;
+  margin: 0;
+  object-fit: contain;
+  image-rendering: auto;
+  vertical-align: middle;
 }
 
 .supoku-box-panel {
@@ -1009,6 +1057,41 @@ body.light-theme .valid-choice-name {
   font-size: 0.85rem;
 }
 
+.supoku-box-panel .supoku-box-count {
+  margin: 0 0 8px;
+  color: #254b34;
+  font-size: 0.75rem;
+  text-align: right;
+}
+
+.supoku-box-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 0 8px;
+}
+
+.supoku-box-filters label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  color: #183b29;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.supoku-box-filters select {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid #52775b;
+  border-radius: 6px;
+  background: #f5ffd9;
+  color: #173b29;
+  font: inherit;
+}
+
 .supoku-pokemon-box {
   display: grid;
   grid-template-columns: repeat(8, minmax(0, 1fr));
@@ -1019,6 +1102,16 @@ body.light-theme .valid-choice-name {
   background:
     linear-gradient(rgba(219,242,191,0.8), rgba(219,242,191,0.8)),
     repeating-linear-gradient(0deg, #75a878 0 2px, #8dbd8b 2px 4px);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.supoku-box-empty {
+    grid-column: 1 / -1;
+    margin: 8px;
+    color: #173b29;
+    font-size: 0.85rem;
+    text-align: center;
 }
 
 .supoku-box-pokemon {
@@ -1038,6 +1131,9 @@ body.light-theme .valid-choice-name {
   line-height: 1.05;
   text-transform: capitalize;
   touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: element;
 }
 
 .supoku-box-pokemon:hover,
@@ -1054,6 +1150,7 @@ body.light-theme .valid-choice-name {
   object-fit: contain;
   image-rendering: pixelated;
   pointer-events: none;
+  -webkit-user-drag: none;
 }
 
 .supoku-box-pokemon span {
@@ -1095,6 +1192,83 @@ body.light-theme .valid-choice-name {
   width: 40px;
   height: 40px;
   image-rendering: pixelated;
+}
+
+.supoku-cell-picker {
+  position: absolute;
+  top: calc(100% - 2px);
+  left: 0;
+  z-index: 20;
+  display: grid;
+  width: min(360px, calc(100vw - 36px));
+  max-height: 230px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  overflow: auto;
+  padding: 7px;
+  border: 2px solid #52775b;
+  border-radius: 8px;
+  background: #e5f3d0;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.supoku-cell-picker.align-right {
+  right: 0;
+  left: auto;
+}
+
+.supoku-cell-picker.align-above {
+  top: auto;
+  bottom: calc(100% - 2px);
+}
+
+.supoku-cell-picker p {
+  grid-column: 1 / -1;
+  margin: 8px;
+  color: #173b29;
+  font-size: 12px;
+}
+
+.supoku-cell-picker-option {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 2px;
+  border: 1px solid rgba(41,83,54,0.4);
+  border-radius: 5px;
+  background: rgba(245,255,218,0.82);
+  color: #173b29;
+  font-size: 9px;
+  line-height: 1.05;
+  text-transform: capitalize;
+  touch-action: manipulation;
+}
+
+.supoku-cell-picker-option:hover,
+.supoku-cell-picker-option:focus-visible {
+  outline: 2px solid #d29b00;
+  background: #f5ffd9;
+  transform: none;
+}
+
+.supoku-cell-picker-option img {
+  width: 44px;
+  height: 44px;
+  image-rendering: pixelated;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.supoku-cell-picker-option span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .supoku-shuffle {
@@ -1224,25 +1398,24 @@ body.light-theme .supoku-suggestions .suggestion.selected {
 }
 
 .supoku-completion {
-  max-width: 520px;
-  margin: 20px auto;
-  padding: 18px;
+  width: min(520px, calc(100% - 40px));
+  max-width: none;
+  padding: 0;
   border: 1px solid rgba(34,197,94,0.35);
-  border-radius: 18px;
-  background: rgba(34,197,94,0.08);
+  background: #111c30;
 }
 
-.button-row[hidden],
-.supoku-completion[hidden] {
+.button-row[hidden] {
   display: none;
 }
 
 .supoku-completion h2 {
-  margin: 0 0 8px;
+  margin: 8px 0 18px;
 }
 
 .supoku-completion p {
   margin: 8px 0;
+  color: #cbd5e1;
 }
 
 .supoku-dialog {
@@ -1264,32 +1437,6 @@ body.light-theme .supoku-suggestions .suggestion.selected {
 .supoku-dialog-content {
   position: relative;
   padding: 32px;
-}
-
-.supoku-difficulty-label {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  margin: 20px 0 4px;
-  font-weight: 700;
-  text-align: left;
-}
-
-.supoku-difficulty-label select {
-  width: 100%;
-  padding: 11px 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #1e293b;
-  color: #f8fafc;
-  font: inherit;
-}
-
-.supoku-dialog .supoku-difficulty-description {
-  min-height: 2.5em;
-  margin: 8px 0 16px;
-  color: #cbd5e1;
-  font-size: 0.9rem;
 }
 
 .supoku-dialog-close {
@@ -1428,6 +1575,10 @@ body.light-theme .supoku-timer-card strong {
 body.light-theme .supoku-dialog {
   background: #fff;
   color: #0f172a;
+}
+
+body.light-theme .supoku-completion p {
+  color: #475569;
 }
 
 body.light-theme .supoku-dialog p {
@@ -1803,6 +1954,20 @@ body.light-theme .supoku-info-btn {
     padding: 10px;
   }
 
+  .supoku-box-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .supoku-box-filters label {
+    font-size: 0.68rem;
+  }
+
+  .supoku-box-filters select {
+    padding: 7px 5px;
+    font-size: 12px;
+  }
+
   .supoku-pokemon-box {
     grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 4px;
@@ -1841,7 +2006,12 @@ body.light-theme .supoku-info-btn {
   }
 
   .supoku-cell .supoku-cell-details {
-    font-size: 7px;
+    font-size: 8px;
+  }
+
+  .supoku-cell .supoku-cell-type-icon {
+    width: 38px;
+    height: 14px;
   }
 
   .supoku-shuffle {
