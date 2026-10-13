@@ -937,11 +937,12 @@ function renderBoard(): void {
         : ", hidden answer"}`
     );
     if (isGiven || isSolved) {
-      const typeDetails = shownPokemon.types.map((type) =>
-        puzzle!.types.includes(type)
+      const typeDetails = shownPokemon.types.map((type, typeIndex) => {
+        const label = puzzle!.types.includes(type)
           ? `<img class="supoku-cell-type-icon" src="/Types/${type}.png" alt="${formatName(type)}" title="${formatName(type)} type" />`
-          : formatName(type)
-      ).join("/");
+          : formatName(type);
+        return `<span class="supoku-cell-type">${typeIndex > 0 ? "/" : ""}${label}</span>`;
+      }).join("");
       button.innerHTML = `
         <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${shownPokemon.id}.png" alt="" />
         <span class="supoku-pokemon-name">${formatName(shownPokemon.name)}</span>
@@ -1521,6 +1522,18 @@ export function initDailySupoku(data: SupokuPokemon[]): void {
       renderBoard();
     });
   }
+  document.getElementById("supokuBoxClearFilters")!.addEventListener("click", () => {
+    normalBoxFilters = {
+      generation: "all",
+      evolutionClass: "all",
+      type: "all",
+    };
+    for (const [elementId] of boxFilterHandlers) {
+      (document.getElementById(elementId) as HTMLSelectElement).value = "all";
+    }
+    openCellPickerIndex = undefined;
+    renderBoard();
+  });
   window.addEventListener("pointermove", moveBoxPointerGhost);
   window.addEventListener("pointerup", onBoxPointerUp);
   window.addEventListener("pointercancel", clearBoxDragState);

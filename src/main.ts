@@ -831,6 +831,58 @@ function toggleTheme() {
 
   themeBtn.textContent = isLight ? "🌙": "☀️";
 }
+
+function renderSupokuInstructions(isWelcome: boolean): string {
+  const dialogId = isWelcome ? "supokuWelcome" : "supokuInfo";
+  const titleId = isWelcome ? "supokuWelcomeTitle" : "supokuInfoTitle";
+  return `
+    <dialog id="${dialogId}" class="supoku-dialog supoku-instructions-dialog${isWelcome ? " supoku-welcome-dialog" : ""}" aria-labelledby="${titleId}">
+      <div class="supoku-dialog-content">
+        ${isWelcome ? "" : '<button id="supokuInfoClose" class="supoku-dialog-close" type="button" aria-label="Close instructions">×</button>'}
+        <span class="supoku-dialog-kicker">${isWelcome ? "A new daily challenge" : "Daily SuPoku"}</span>
+        <h2 id="${titleId}">How to play SuPoku</h2>
+        <p class="supoku-instructions-objective">Use each Pokémon from the storage box only once across the whole board. Each row, column, and bold-outlined 2×2 box must contain each Region and Evolution category once, plus both daily types.</p>
+        <div class="supoku-example" role="img" aria-label="Pikachu is placed in a cell. Electrike is added beside it; both cells turn red because both Pokémon are Electric type.">
+          <div class="supoku-example-board" aria-hidden="true">
+            <div class="supoku-example-cell supoku-example-pikachu">
+              <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/25.png" alt="" />
+            </div>
+            <div class="supoku-example-cell supoku-example-electrike">
+              <span class="supoku-example-tap"></span>
+              <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/309.png" alt="" />
+            </div>
+            <div class="supoku-example-cell"></div>
+            <div class="supoku-example-cell"></div>
+          </div>
+          <div class="supoku-example-details" aria-hidden="true">
+            <div class="supoku-example-detail supoku-example-pikachu-detail">
+              <span>Pikachu</span><span class="supoku-example-type"><img src="/Types/electric.png" alt="" />Electric</span>
+            </div>
+            <div class="supoku-example-detail supoku-example-electrike-detail">
+              <span>Electrike</span><span class="supoku-example-type"><img src="/Types/electric.png" alt="" />Electric</span>
+            </div>
+          </div>
+          <p class="supoku-example-caption">Both are Electric, so they can't share a row.</p>
+        </div>
+        ${isWelcome ? `
+          <p class="supoku-timer-note">Your timer starts when you press Start.</p>
+          <p class="supoku-dialog-date">Today's puzzle: <strong id="supokuWelcomeDate"></strong></p>
+          <button id="supokuStartBtn" class="supoku-start-btn" type="button" autofocus>Start</button>
+        ` : ""}
+        <details class="supoku-tips">
+          <summary>Tips</summary>
+          <ul>
+            <li>A Pokémon with both daily types can count as either one of them.</li>
+            <li>Tap the lightbulb for possible category hints in empty cells.</li>
+            <li>Each cell has one valid category combination, but multiple Pokémon may fit it.</li>
+            <li>Normal mode uses a 40-Pokémon storage box — the box includes decoys that won't work with the solution.</li>
+          </ul>
+        </details>
+      </div>
+    </dialog>
+  `;
+}
+
 document.querySelector("#app")!.innerHTML = `
   <div class="navbar">
   <div class="nav-left">
@@ -1003,6 +1055,9 @@ document.querySelector("#app")!.innerHTML = `
             <option value="all">ALL</option>
           </select>
         </label>
+        <button id="supokuBoxClearFilters" class="supoku-box-clear-filters" type="button">
+          Clear filters
+        </button>
       </div>
       <p id="supokuBoxCount" class="supoku-box-count" aria-live="polite"></p>
       <div id="supokuPokemonBox" class="supoku-pokemon-box" aria-label="Pokémon available to place"></div>
@@ -1052,25 +1107,8 @@ document.querySelector("#app")!.innerHTML = `
     </div>
   </div>
 </dialog>
-<dialog id="supokuInfo" class="supoku-dialog" aria-labelledby="supokuInfoTitle">
-  <div class="supoku-dialog-content">
-    <button id="supokuInfoClose" class="supoku-dialog-close" type="button" aria-label="Close instructions">×</button>
-    <span class="supoku-dialog-kicker">Daily SuPoku</span>
-    <h2 id="supokuInfoTitle">How to play SuPoku</h2>
-    <p>Use each Pokémon only once across the whole board. Each row, column, and bold-outlined 2×2 box must contain each Region and Evolution category once, plus exactly two Pokémon that match a daily type. Those two must collectively cover both daily types; the other two match neither.</p>
-    <p>A Pokémon with both daily types can count as either one of them. Tap the lightbulb for possible category hints in empty cells. Each cell has one valid category combination, but multiple Pokémon may fit it. Normal mode uses a 40-Pokémon storage box. Your timer starts when you press Start.</p>
-  </div>
-</dialog>
-<dialog id="supokuWelcome" class="supoku-dialog" aria-labelledby="supokuWelcomeTitle">
-  <div class="supoku-dialog-content">
-    <span class="supoku-dialog-kicker">A new daily challenge</span>
-    <h2 id="supokuWelcomeTitle">How to play SuPoku</h2>
-    <p>Use each Pokémon only once across the whole board. Each row, column, and bold-outlined 2×2 box must contain each Region and Evolution category once, plus exactly two Pokémon that match a daily type. Those two must collectively cover both daily types; the other two match neither.</p>
-    <p>A Pokémon with both daily types can count as either one of them. Tap the lightbulb for possible category hints in empty cells. Each cell has one valid category combination, but multiple Pokémon may fit it. Today's puzzle starts in Normal mode: choose from the 40-Pokémon storage box, which includes useful choices and decoys.</p>
-    <p class="supoku-dialog-date">Today's puzzle: <strong id="supokuWelcomeDate"></strong></p>
-    <button id="supokuStartBtn" class="supoku-start-btn" type="button" autofocus>Start</button>
-  </div>
-</dialog>
+${renderSupokuInstructions(false)}
+${renderSupokuInstructions(true)}
 </div>
 <div class="next-puzzle-countdown" role="timer" aria-label="Time until the next daily puzzle">
   Next puzzle in <time id="nextPuzzleCountdown">--:--:--</time>
