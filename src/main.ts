@@ -1,5 +1,9 @@
 import "./style.css";
-import { initDailySupoku, startDailySupoku } from "./supoku";
+import {
+  initDailySupoku,
+  setDailySupokuDifficulty,
+  startDailySupoku,
+} from "./supoku";
 
 type PokemonData = {
   id: number;
@@ -14,6 +18,13 @@ type PokemonData = {
 
 const API = "https://pokeapi.co/api/v2/pokemon/";
 const POKEDEX_SIZE = 649;
+const regionsByGeneration: Record<number, string> = {
+  1: "Kanto",
+  2: "Johto",
+  3: "Hoenn",
+  4: "Sinnoh",
+  5: "Unova",
+};
 let target: PokemonData;
 let pokemonNames: string[] = [];
 let guesses = 0;
@@ -49,6 +60,10 @@ function generationToNumber(gen: string): number {
     "generation-ix": 9,
   };
   return map[gen] ?? 0;
+}
+
+function regionForGeneration(generation: number): string {
+  return regionsByGeneration[generation] ?? `Generation ${generation}`;
 }
 
 async function getEvolutionStage(species: any): Promise<number> {
@@ -537,7 +552,7 @@ function renderGuess(guess: PokemonData) {
 
     <td>
       <div>${compareNumSimple(guess.generation, target.generation)}</div>
-      <small>Gen ${guess.generation}</small>
+      <small>${regionForGeneration(guess.generation)}</small>
     </td>
   `;
 
@@ -845,23 +860,23 @@ document.querySelector("#app")!.innerHTML = `
       <div id="settingsPanel" class="settings-panel" style="display:none;">
         <div class="setting-item">
           <input type="checkbox" id="gen1" checked />
-          <label for="gen1">Gen 1</label>
+          <label for="gen1">Kanto</label>
         </div>
         <div class="setting-item">
           <input type="checkbox" id="gen2" checked />
-          <label for="gen2">Gen 2</label>
+          <label for="gen2">Johto</label>
         </div>
         <div class="setting-item">
           <input type="checkbox" id="gen3" checked />
-          <label for="gen3">Gen 3</label>
+          <label for="gen3">Hoenn</label>
         </div>
         <div class="setting-item">
           <input type="checkbox" id="gen4" checked />
-          <label for="gen4">Gen 4</label>
+          <label for="gen4">Sinnoh</label>
         </div>
         <div class="setting-item">
           <input type="checkbox" id="gen5" checked />
-          <label for="gen5">Gen 5</label>
+          <label for="gen5">Unova</label>
         </div>
       </div>
     </div>
@@ -924,7 +939,7 @@ document.querySelector("#app")!.innerHTML = `
             <th>Height</th>
             <th>Weight</th>
             <th>Evolution</th>
-            <th>Generation</th>
+            <th>Region</th>
           </tr>
         </thead>
         <tbody id="guessBoard"></tbody>
@@ -959,15 +974,21 @@ document.querySelector("#app")!.innerHTML = `
       <button id="supokuInfoBtn" class="supoku-info-btn" type="button" aria-label="How to play SuPoku" title="How to play">i</button>
     </div>
     <div class="supoku-categories" aria-label="Today's categories">
-      <span><strong>Generation</strong><small id="supokuGenerations">Four daily generations</small></span>
+      <span><strong>Region</strong><small id="supokuGenerations">Kanto · Johto · Hoenn · Sinnoh · Unova</small></span>
       <span><strong>Evolution</strong><small id="supokuEvolutionClasses">Four daily stages</small></span>
       <span><strong>Type</strong><img id="supokuTypeOne" class="supoku-type-icon" alt="" /></span>
       <span><strong>Type</strong><img id="supokuTypeTwo" class="supoku-type-icon" alt="" /></span>
     </div>
     <div id="supokuBoard" class="supoku-board" aria-label="Daily SuPoku 4 by 4 board"></div>
+    <section id="supokuBoxPanel" class="supoku-box-panel" aria-labelledby="supokuBoxTitle" hidden>
+      <h2 id="supokuBoxTitle">Pokémon Storage Box</h2>
+      <p>Drag a Pokémon onto an empty cell, or select one here and tap a cell.</p>
+      <div id="supokuPokemonBox" class="supoku-pokemon-box" aria-label="Pokémon available to place"></div>
+    </section>
     <div class="supoku-stats">
       <span>Filled <strong id="supokuProgress">4/16</strong></span>
       <span>Conflicts <strong id="supokuMistakes">0</strong></span>
+      <span>Possible answers <strong id="supokuPossibleAnswers">0</strong></span>
     </div>
     <div id="supokuCompletion" class="supoku-completion" hidden>
       <h2 id="supokuCompletionTitle">Daily puzzle complete!</h2>
@@ -977,15 +998,17 @@ document.querySelector("#app")!.innerHTML = `
         <button id="supokuCompletionCloseBtn" type="button">View board</button>
       </div>
     </div>
-    <p id="supokuSelected" class="supoku-selected" aria-live="polite"></p>
     <div id="supokuSearchRow" class="search-row supoku-search">
       <div class="search-wrapper">
-        <input id="supokuInput" list="supokuNameOptions" placeholder="Search Pokémon for this cell..." autocomplete="off" />
-        <datalist id="supokuNameOptions"></datalist>
+        <div class="supoku-search-field">
+          <input id="supokuInput" placeholder="Search Pokémon for this cell..." autocomplete="off" aria-controls="supokuSuggestions" aria-autocomplete="list" />
+          <div id="supokuSuggestions" class="supoku-suggestions" role="listbox" aria-label="Pokémon suggestions" hidden></div>
+        </div>
         <button id="supokuGuessBtn" type="button">Place</button>
       </div>
     </div>
     <div id="supokuActionRow" class="button-row">
+      <button id="supokuHintToggle" class="supoku-hint-toggle" type="button" aria-label="Show hints" aria-pressed="false" title="Show hints">💡</button>
       <button id="supokuRevealBtn" class="supoku-give-up" type="button">Give up</button>
       <button id="supokuShareBtn" type="button">Share result</button>
     </div>
@@ -1009,20 +1032,31 @@ document.querySelector("#app")!.innerHTML = `
     <button id="supokuInfoClose" class="supoku-dialog-close" type="button" aria-label="Close instructions">×</button>
     <span class="supoku-dialog-kicker">Daily SuPoku</span>
     <h2 id="supokuInfoTitle">How to play SuPoku</h2>
-    <p>Fill the 4×4 board with Pokémon. Each row, column, and bold-outlined 2×2 box must contain each Generation and Evolution category once, exactly one Pokémon of each daily type, and two Pokémon that are neither daily type.</p>
-    <p>A Pokémon that has both daily types is not allowed. Each cell has one valid category combination, but multiple Pokémon may fit it. Choose a cell, search for any Pokémon that matches, and place it. Your timer starts when you press Start.</p>
+    <p>Use each Pokémon only once across the whole board. Each row, column, and bold-outlined 2×2 box must contain each Region and Evolution category once, plus exactly two Pokémon that match a daily type. Those two must collectively cover both daily types; the other two match neither.</p>
+    <p>A Pokémon with both daily types can count as either one of them. Tap the lightbulb for possible category hints in empty cells. Each cell has one valid category combination, but multiple Pokémon may fit it. Normal mode uses a 40-Pokémon storage box; Hard mode lets you search for any Pokémon. Your timer starts when you press Start.</p>
   </div>
 </dialog>
 <dialog id="supokuWelcome" class="supoku-dialog" aria-labelledby="supokuWelcomeTitle">
   <div class="supoku-dialog-content">
     <span class="supoku-dialog-kicker">A new daily challenge</span>
     <h2 id="supokuWelcomeTitle">How to play SuPoku</h2>
-    <p>Fill the 4×4 board with Pokémon. Each row, column, and bold-outlined 2×2 box must contain each Generation and Evolution category once, exactly one Pokémon of each daily type, and two Pokémon that are neither daily type.</p>
-    <p>A Pokémon that has both daily types is not allowed. Each cell has one valid category combination, but multiple Pokémon may fit it. Choose a cell, search for any Pokémon that matches, and place it. Your timer starts when you press Start.</p>
+    <p>Use each Pokémon only once across the whole board. Each row, column, and bold-outlined 2×2 box must contain each Region and Evolution category once, plus exactly two Pokémon that match a daily type. Those two must collectively cover both daily types; the other two match neither.</p>
+    <p>A Pokémon with both daily types can count as either one of them. Tap the lightbulb for possible category hints in empty cells. Each cell has one valid category combination, but multiple Pokémon may fit it.</p>
+    <label class="supoku-difficulty-label" for="supokuDifficulty">
+      Difficulty
+      <select id="supokuDifficulty">
+        <option value="hard">Hard mode — search for Pokémon</option>
+        <option value="normal">Normal mode — storage box</option>
+      </select>
+    </label>
+    <p id="supokuDifficultyDescription" class="supoku-difficulty-description">Search for any Pokémon and place it in the selected cell. Wrong choices create conflicts.</p>
     <p class="supoku-dialog-date">Today's puzzle: <strong id="supokuWelcomeDate"></strong></p>
     <button id="supokuStartBtn" class="supoku-start-btn" type="button" autofocus>Start</button>
   </div>
 </dialog>
+</div>
+<div class="next-puzzle-countdown" role="timer" aria-label="Time until the next daily puzzle">
+  Next puzzle in <time id="nextPuzzleCountdown">--:--:--</time>
 </div>
 <footer class="site-footer">
   This website is not affiliated with Nintendo and does not own or claim any rights to any Nintendo trademark or the Pokémon trademark, and all references to such are used for commentary and informational purposes only.
@@ -1157,6 +1191,13 @@ const supokuWelcome = document.getElementById("supokuWelcome") as HTMLDialogElem
 supokuWelcome.addEventListener("cancel", (event) => {
   event.preventDefault();
 });
+const supokuDifficulty = document.getElementById("supokuDifficulty") as HTMLSelectElement;
+const supokuDifficultyDescription = document.getElementById("supokuDifficultyDescription")!;
+supokuDifficulty.addEventListener("change", () => {
+  supokuDifficultyDescription.textContent = supokuDifficulty.value === "normal"
+    ? "Choose from 40 Pokémon in the storage box. The box includes useful choices and decoys."
+    : "Search for any Pokémon and place it in the selected cell. Wrong choices create conflicts.";
+});
 const supokuInfo = document.getElementById("supokuInfo") as HTMLDialogElement;
 document.getElementById("supokuInfoBtn")!.addEventListener("click", () => {
   supokuInfo.showModal();
@@ -1167,11 +1208,12 @@ document.getElementById("supokuInfoClose")!.addEventListener("click", () => {
 document.getElementById("supokuStartBtn")!.addEventListener("click", () => {
   setActiveGameTab("supoku");
   supokuWelcome.close();
+  setDailySupokuDifficulty(supokuDifficulty.value === "normal" ? "normal" : "hard");
   startDailySupoku();
 });
 
 try {
-  initDailySupoku(supokuPokemon, pokemonNames);
+  initDailySupoku(supokuPokemon);
 } catch (error) {
   const status = document.getElementById("supokuStatus")!;
   status.textContent = error instanceof Error
